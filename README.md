@@ -23,7 +23,7 @@ Open [http://localhost:4321](http://localhost:4321), enter two GitHub usernames,
 
 ## Contribution API
 
-`GET /api/contributions/{username}` proxies GitHub's `https://github.com/{username}.contribs` endpoint from the server, avoiding browser CORS restrictions. Valid usernames receive the upstream JSON, including `from`, `to`, `total_contributions`, `colors_full`, `weeks`, and `months`. Invalid usernames return `400`, missing GitHub users return `404`, and upstream failures return `502`. Successful responses are cached in memory for 10 minutes.
+`GET /api/contributions/{username}` proxies GitHub's `https://github.com/{username}.contribs` endpoint from the server, avoiding browser CORS restrictions. Valid usernames receive the upstream JSON, including `from`, `to`, `total_contributions`, `colors_full`, `weeks`, and `months`. Invalid usernames return `400`, missing GitHub users return `404`, and upstream failures return `502`. Successful responses are cached in memory for 10 minutes; `X-Cache` reports `MISS` or `HIT`.
 
 # 🎮 Mona Mayhem
 

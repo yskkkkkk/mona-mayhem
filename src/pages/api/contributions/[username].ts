@@ -7,12 +7,18 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 10 * 1000;
 const cache = new Map<string, { data: ContributionData; expiresAt: number }>();
 
-function jsonResponse<T>(data: T, status: number, cacheControl: string): Response {
+function jsonResponse<T>(
+	data: T,
+	status: number,
+	cacheControl: string,
+	cacheStatus?: 'HIT' | 'MISS',
+): Response {
 	return new Response(JSON.stringify(data), {
 		status,
 		headers: {
 			'Content-Type': 'application/json',
 			'Cache-Control': cacheControl,
+			...(cacheStatus ? { 'X-Cache': cacheStatus } : {}),
 		},
 	});
 }
@@ -31,7 +37,7 @@ export const GET: APIRoute = async ({ params }) => {
 
 	const cached = cache.get(cacheKey);
 	if (cached) {
-		return jsonResponse(cached.data, 200, 'public, max-age=600');
+		return jsonResponse(cached.data, 200, 'public, max-age=600', 'HIT');
 	}
 
 	const controller = new AbortController();
@@ -49,7 +55,7 @@ export const GET: APIRoute = async ({ params }) => {
 
 		const data: ContributionData = await upstream.json();
 		cache.set(cacheKey, { data, expiresAt: Date.now() + CACHE_TTL_MS });
-		return jsonResponse(data, 200, 'public, max-age=600');
+		return jsonResponse(data, 200, 'public, max-age=600', 'MISS');
 	} catch {
 		return jsonResponse<ApiError>({ error: 'Contribution service unavailable' }, 502, 'no-store');
 	} finally {
