@@ -15,6 +15,15 @@ npm run dev
 
 Open [http://localhost:4321](http://localhost:4321), enter two GitHub usernames, and start a battle.
 
+To check a production build:
+
+```bash
+npm run build
+npm run preview
+```
+
+If this app's preview is already running, stop it before `npm run build`, then restart it with `npm run preview` after the build finishes. An old preview process can reference outdated hashed CSS/JS URLs, causing 404s and broken styling or scripts.
+
 ## Features
 
 - Side-by-side contribution graphs with daily tooltips and color-level legends
@@ -24,6 +33,24 @@ Open [http://localhost:4321](http://localhost:4321), enter two GitHub usernames,
 ## Contribution API
 
 `GET /api/contributions/{username}` proxies GitHub's `https://github.com/{username}.contribs` endpoint from the server, avoiding browser CORS restrictions. Valid usernames receive the upstream JSON, including `from`, `to`, `total_contributions`, `colors_full`, `weeks`, and `months`. Invalid usernames return `400`, missing GitHub users return `404`, and upstream failures return `502`. Successful responses are cached in memory for 10 minutes; `X-Cache` reports `MISS` or `HIT`.
+
+## Browser verification checklist
+
+These manual checks are pending. Use browser DevTools for viewport, reduced-motion, storage, and API-response simulations where needed.
+
+- [ ] Battle `octocat` vs `torvalds`; both graphs, totals, streaks, and the winner appear. Repeat using Enter in either username field.
+- [ ] Submit blank and malformed usernames (for example, `bad/name`) in either field; clear validation errors appear and correcting the inputs allows a battle.
+- [ ] Try a validly formatted but nonexistent GitHub username in each player position separately; the API error identifies that player, loading ends, and a corrected retry works.
+- [ ] Check 12px graph cells and five legend swatches per graph. Hover and keyboard-focus days to see visible tooltips with the correct date and contribution count.
+- [ ] Tab enters each graph at one day; arrow keys move focus within that graph, and Tab/Shift+Tab leave rather than traversing every cell. Focused tooltips remain visible, including near graph edges.
+- [ ] At 1024px, 768px, and mobile widths (for example, 375px), controls and results remain usable. Wide graphs scroll horizontally inside their own containers, without page-level horizontal scrolling.
+- [ ] Switch themes and reload; the selected theme persists.
+- [ ] Run several battles and reload; up to 10 recent battles are retained. Clear history and reload; it stays empty without clearing the saved theme.
+- [ ] Share a winner result and a tie (use the same username for both players); the shared/copied winner or tie status, both names, and both contribution counts match the displayed results.
+- [ ] Check the countdown and results slide-in. Enable reduced motion and repeat; animations are suppressed while the battle still reaches its results.
+- [ ] Simulate `localStorage` read/write/remove failures, including quota errors; a warning remains visible during battles while sharing and theme changes remain usable, without uncaught errors.
+- [ ] Simulate corrupt saved theme/history data. Invalid JSON, non-array history, or mixed invalid history entries must not block battles: the stored history stays untouched, valid records display, and new saves pause until a successful Clear History.
+- [ ] Simulate invalid JSON or an unexpected contribution API response shape; the affected player gets a readable error while any valid player's graph remains visible. No winner/share result is offered, loading ends, and a valid retry succeeds.
 
 # 🎮 Mona Mayhem
 

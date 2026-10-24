@@ -1,7 +1,3 @@
----
-import type { ContributionData } from '../types/contributions';
----
-
 <!doctype html>
 <html lang="en">
 	<head>
@@ -48,12 +44,14 @@ import type { ContributionData } from '../types/contributions';
 				<button id="battle-button" type="submit">⚔ BATTLE ⚔</button>
 			</form>
 
+			<p id="storage-warning" class="result-error" role="status" aria-live="polite" aria-atomic="true"></p>
+			<p id="audio-warning" class="result-error" role="status" aria-live="polite" aria-atomic="true"></p>
 			<p id="loading" class="loading" role="status" aria-live="polite" hidden>Loading battle data...</p>
 			<p id="battle-status" class="battle-status" role="status" aria-live="polite"></p>
 			<div id="countdown-overlay" class="countdown-overlay" role="status" aria-live="assertive" hidden></div>
 			<p id="winner-banner" class="winner-banner" role="status" aria-live="polite" hidden></p>
 
-			<section id="results" class="results" aria-label="Battle results" aria-live="polite" hidden>
+			<section id="results" class="results" aria-label="Battle results" hidden>
 				<article class="result-card" id="player-one-card" aria-label="Player 1 contribution results">
 					<div class="result-content" id="player-one-result"></div>
 				</article>
@@ -85,8 +83,12 @@ import type { ContributionData } from '../types/contributions';
 			const themeToggle = document.querySelector<HTMLButtonElement>('#theme-toggle')!;
 			const soundToggle = document.querySelector<HTMLButtonElement>('#sound-toggle')!;
 			const results = document.querySelector<HTMLElement>('#results')!;
+			const playerOneResult = document.querySelector<HTMLElement>('#player-one-result')!;
+			const playerTwoResult = document.querySelector<HTMLElement>('#player-two-result')!;
 			const loading = document.querySelector<HTMLElement>('#loading')!;
 			const status = document.querySelector<HTMLElement>('#battle-status')!;
+			const storageWarning = document.querySelector<HTMLElement>('#storage-warning')!;
+			const audioWarning = document.querySelector<HTMLElement>('#audio-warning')!;
 			const countdownOverlay = document.querySelector<HTMLElement>('#countdown-overlay')!;
 			const winnerBanner = document.querySelector<HTMLElement>('#winner-banner')!;
 			const shareControls = document.querySelector<HTMLElement>('#share-controls')!;
@@ -107,105 +109,226 @@ import type { ContributionData } from '../types/contributions';
 			let muted = true;
 			let audioContext: AudioContext | undefined;
 			let lastBattle: BattleRecord | undefined;
+			let battleInProgress = false;
+			let shareAttempt = 0;
+			let shareFeedbackTimer: number | undefined;
+			const storageWarnings = { theme: '', history: '' };
 
-			const savedTheme = localStorage.getItem('mona-mayhem-theme');
-			if (savedTheme === 'alternate') {
-				root.dataset.theme = 'alternate';
-				themeToggle.setAttribute('aria-pressed', 'true');
-				themeToggle.textContent = '⚡ Switch Theme';
+			function showStorageWarning(kind: 'theme' | 'history', message: string): void {
+				storageWarnings[kind] = message;
+				storageWarning.textContent = Object.values(storageWarnings).filter(Boolean).join(' ');
 			}
 
 			themeToggle.addEventListener('click', () => {
 				const isAlternate = root.dataset.theme !== 'alternate';
 				if (isAlternate) {
 					root.dataset.theme = 'alternate';
-					localStorage.setItem('mona-mayhem-theme', 'alternate');
 				} else {
 					delete root.dataset.theme;
-					localStorage.removeItem('mona-mayhem-theme');
 				}
 				themeToggle.setAttribute('aria-pressed', String(isAlternate));
+				try {
+					if (isAlternate) {
+						localStorage.setItem('mona-mayhem-theme', 'alternate');
+					} else {
+						localStorage.removeItem('mona-mayhem-theme');
+					}
+					showStorageWarning('theme', '');
+				} catch {
+					showStorageWarning('theme', 'Your theme could not be saved. Theme changes still work for this visit.');
+				}
 			});
+
+			function updateSoundToggle(): void {
+				soundToggle.setAttribute('aria-pressed', String(muted));
+				soundToggle.textContent = muted ? '🔇 Sound: Muted' : '🔊 Sound: On';
+			}
+
+			function reportAudioFailure(): void {
+				muted = true;
+				updateSoundToggle();
+				audioWarning.textContent = 'Sound is unavailable and has been muted. Battles still work without sound; try enabling it again.';
+			}
 
 			function playSound(kind: 'coin' | 'powerup' | 'error'): void {
 				if (muted) return;
-				audioContext ??= new AudioContext();
-				const notes =
-					kind === 'coin'
-						? [880, 1175]
-						: kind === 'powerup'
-							? [523, 659, 784, 1047]
-							: [180, 110, 70];
-				const wave: OscillatorType = kind === 'error' ? 'sawtooth' : 'square';
-				notes.forEach((frequency, index) => {
-					const oscillator = audioContext!.createOscillator();
-					const gain = audioContext!.createGain();
-					const startAt = audioContext!.currentTime + index * 0.09;
-					oscillator.type = wave;
-					oscillator.frequency.setValueAtTime(frequency, startAt);
-					gain.gain.setValueAtTime(0.0001, startAt);
-					gain.gain.exponentialRampToValueAtTime(0.12, startAt + 0.015);
-					gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.12);
-					oscillator.connect(gain);
-					gain.connect(audioContext!.destination);
-					oscillator.start(startAt);
-					oscillator.stop(startAt + 0.13);
-				});
-			}
-
-			soundToggle.addEventListener('click', () => {
-				muted = !muted;
-				soundToggle.setAttribute('aria-pressed', String(muted));
-				soundToggle.textContent = muted ? '🔇 Sound: Muted' : '🔊 Sound: On';
-			});
-
-			function readHistory(): BattleRecord[] {
 				try {
-					const stored: unknown = JSON.parse(localStorage.getItem('mona-mayhem-history') ?? '[]');
-					return Array.isArray(stored) ? (stored as BattleRecord[]) : [];
+					if (!audioContext || audioContext.state !== 'running') {
+						reportAudioFailure();
+						return;
+					}
+					const context = audioContext;
+					const notes =
+						kind === 'coin'
+							? [880, 1175]
+							: kind === 'powerup'
+								? [523, 659, 784, 1047]
+								: [180, 110, 70];
+					const wave: OscillatorType = kind === 'error' ? 'sawtooth' : 'square';
+					notes.forEach((frequency, index) => {
+						const oscillator = context.createOscillator();
+						const gain = context.createGain();
+						const startAt = context.currentTime + index * 0.09;
+						oscillator.type = wave;
+						oscillator.frequency.setValueAtTime(frequency, startAt);
+						gain.gain.setValueAtTime(0.0001, startAt);
+						gain.gain.exponentialRampToValueAtTime(0.12, startAt + 0.015);
+						gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.12);
+						oscillator.connect(gain);
+						gain.connect(context.destination);
+						oscillator.start(startAt);
+						oscillator.stop(startAt + 0.13);
+					});
 				} catch {
-					return [];
+					reportAudioFailure();
 				}
 			}
 
-			function renderHistory(): void {
+			soundToggle.addEventListener('click', async () => {
+				if (soundToggle.disabled) return;
+				if (!muted) {
+					muted = true;
+					updateSoundToggle();
+					return;
+				}
+				soundToggle.disabled = true;
+				try {
+					if (!audioContext || audioContext.state === 'closed') {
+						audioContext = new AudioContext();
+					}
+					await audioContext.resume();
+					if (audioContext.state !== 'running') {
+						reportAudioFailure();
+						return;
+					}
+					muted = false;
+					audioWarning.textContent = '';
+					updateSoundToggle();
+				} catch {
+					reportAudioFailure();
+				} finally {
+					soundToggle.disabled = false;
+				}
+			});
+
+			function isObject(value: unknown): value is Record<string, unknown> {
+				return typeof value === 'object' && value !== null && !Array.isArray(value);
+			}
+
+			function isCount(value: unknown): value is number {
+				return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+			}
+
+			function isBattleRecord(value: unknown): value is BattleRecord {
+				if (
+					!isObject(value) ||
+					typeof value.playerOne !== 'string' || !usernamePattern.test(value.playerOne) ||
+					typeof value.playerTwo !== 'string' || !usernamePattern.test(value.playerTwo) ||
+					!isCount(value.playerOneContributions) || !isCount(value.playerTwoContributions) ||
+					typeof value.playedAt !== 'string' || !Number.isFinite(Date.parse(value.playedAt))
+				) return false;
+				const winner = value.playerOneContributions === value.playerTwoContributions
+					? 'Tie'
+					: value.playerOneContributions > value.playerTwoContributions
+						? value.playerOne
+						: value.playerTwo;
+				return value.winner === winner;
+			}
+
+			function readHistory(): { records: BattleRecord[]; canSave: boolean } {
+				let raw: string | null;
+				try {
+					raw = localStorage.getItem('mona-mayhem-history');
+				} catch {
+					showStorageWarning('history', 'Battle history is unavailable. Battles still work, but history cannot be loaded or saved.');
+					return { records: [], canSave: false };
+				}
+				let stored: unknown;
+				try {
+					stored = raw === null ? [] : JSON.parse(raw);
+				} catch {
+					showStorageWarning('history', 'Saved battle history is unreadable and has not been changed. Clear History to start saving again.');
+					return { records: [], canSave: false };
+				}
+				if (!Array.isArray(stored)) {
+					showStorageWarning('history', 'Saved battle history has an invalid format and has not been changed. Clear History to start saving again.');
+					return { records: [], canSave: false };
+				}
+				const records = stored.filter(isBattleRecord);
+				const canSave = records.length === stored.length;
+				showStorageWarning('history', canSave
+					? ''
+					: 'Some saved battles are invalid. Showing valid entries only; saved history is unchanged. Clear History before saving new battles.');
+				return { records: records.slice(0, 10), canSave };
+			}
+
+			function battleSummary(record: BattleRecord): string {
+				const matchup = `${record.playerOne} (${record.playerOneContributions.toLocaleString()}) vs ${record.playerTwo} (${record.playerTwoContributions.toLocaleString()})`;
+				return record.playerOneContributions === record.playerTwoContributions
+					? `${matchup} — IT'S A TIE!`
+					: `${matchup} — ${record.winner} wins!`;
+			}
+
+			function renderHistory(records: BattleRecord[]): void {
 				historyList.replaceChildren();
-				for (const record of readHistory()) {
+				for (const record of records) {
 					const item = document.createElement('li');
 					const time = document.createElement('time');
 					time.dateTime = record.playedAt;
 					time.textContent = new Date(record.playedAt).toLocaleString();
-					item.textContent = `${record.playerOne} (${record.playerOneContributions.toLocaleString()}) vs ${record.playerTwo} (${record.playerTwoContributions.toLocaleString()}) — ${record.winner} `;
+					item.textContent = `${battleSummary(record)} `;
 					item.append(time);
 					historyList.append(item);
 				}
 			}
 
 			function saveBattle(record: BattleRecord): void {
-				const history = [record, ...readHistory()].slice(0, 10);
-				localStorage.setItem('mona-mayhem-history', JSON.stringify(history));
-				renderHistory();
+				const stored = readHistory();
+				if (!stored.canSave) return;
+				const history = [record, ...stored.records].slice(0, 10);
+				try {
+					localStorage.setItem('mona-mayhem-history', JSON.stringify(history));
+				} catch {
+					showStorageWarning('history', 'This battle could not be saved to history. Check browser storage permissions or free up space.');
+					return;
+				}
+				renderHistory(history);
 			}
 
 			clearHistoryButton.addEventListener('click', () => {
-				localStorage.removeItem('mona-mayhem-history');
-				renderHistory();
+				try {
+					localStorage.removeItem('mona-mayhem-history');
+					showStorageWarning('history', '');
+					renderHistory([]);
+				} catch {
+					showStorageWarning('history', 'Saved battle history could not be cleared. Check browser storage permissions and try again.');
+				}
 			});
-			renderHistory();
+
+			function resetShareFeedback(): void {
+				shareAttempt++;
+				window.clearTimeout(shareFeedbackTimer);
+				shareFeedbackTimer = undefined;
+				shareFeedback.textContent = '';
+			}
 
 			shareButton.addEventListener('click', async () => {
 				if (!lastBattle) return;
-				const summary =
-					lastBattle.winner === 'Tie'
-						? `🤝 ${lastBattle.playerOne} vs ${lastBattle.playerTwo}: IT'S A TIE! 🤝`
-						: `🏆 ${lastBattle.winner} wins! ${lastBattle.playerOne} (${lastBattle.playerOneContributions.toLocaleString()}) vs ${lastBattle.playerTwo} (${lastBattle.playerTwoContributions.toLocaleString()}) 🏆`;
+				resetShareFeedback();
+				const attempt = shareAttempt;
+				const summary = battleSummary(lastBattle);
 				try {
 					await navigator.clipboard.writeText(summary);
+					if (attempt !== shareAttempt) return;
 					shareFeedback.textContent = 'Copied to clipboard!';
 				} catch {
+					if (attempt !== shareAttempt) return;
 					shareFeedback.textContent = 'Could not copy results to clipboard.';
 				}
-				window.setTimeout(() => (shareFeedback.textContent = ''), 2500);
+				shareFeedbackTimer = window.setTimeout(() => {
+					if (attempt === shareAttempt) shareFeedback.textContent = '';
+					shareFeedbackTimer = undefined;
+				}, 2500);
 			});
 
 			type PlayerResult = { username: string; data?: ContributionData; error?: string };
@@ -221,17 +344,57 @@ import type { ContributionData } from '../types/contributions';
 				}
 			}
 
+			function isCalendarDate(value: unknown): value is string {
+				if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+				const date = new Date(`${value}T00:00:00Z`);
+				return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+			}
+
+			function isContributionData(value: unknown): value is ContributionData {
+				if (!isObject(value)) return false;
+				const colors = value.colors_full;
+				return (
+					typeof value.schema === 'string' && value.schema.length > 0 &&
+					typeof value.generated_at === 'string' && Number.isFinite(Date.parse(value.generated_at)) &&
+					isCalendarDate(value.from) && isCalendarDate(value.to) && value.from <= value.to &&
+					isCount(value.range_days) && value.range_days > 0 &&
+					isCount(value.total_contributions) &&
+					typeof value.private_contributions_included === 'boolean' &&
+					Array.isArray(colors) && colors.length > 0 &&
+					colors.every((color) => typeof color === 'string' && color.trim().length > 0) &&
+					Array.isArray(value.weeks) && value.weeks.length > 0 &&
+					value.weeks.every((week) =>
+						isObject(week) && isCount(week.index) && isCalendarDate(week.first_day) &&
+						Array.isArray(week.contribution_days) && week.contribution_days.length <= 7 &&
+						week.contribution_days.every((day) =>
+							isObject(day) && isCount(day.weekday) && day.weekday <= 6 &&
+							isCount(day.count) && isCount(day.level) && day.level < colors.length,
+						) &&
+						new Set(week.contribution_days.map((day) => day.weekday)).size === week.contribution_days.length,
+					) &&
+					Array.isArray(value.months) &&
+					value.months.every((month) =>
+						isObject(month) && typeof month.month === 'string' && isCount(month.total_weeks),
+					)
+				);
+			}
+
 			async function fetchPlayer(username: string): Promise<PlayerResult> {
 				try {
 					const response = await fetch(`/api/contributions/${encodeURIComponent(username)}`);
-					const body = (await response.json()) as ContributionData | { error: string };
+					const body: unknown = await response.json();
 					if (!response.ok) {
 						return {
 							username,
-							error: 'error' in body ? body.error : 'Unable to load contributions.',
+							error: isObject(body) && typeof body.error === 'string' && body.error.trim()
+								? body.error
+								: 'Unable to load contributions.',
 						};
 					}
-					return { username, data: body as ContributionData };
+					if (!isContributionData(body)) {
+						return { username, error: 'The contribution service returned invalid data. Please try again.' };
+					}
+					return { username, data: body };
 				} catch {
 					return { username, error: 'Unable to reach the contribution service.' };
 				}
@@ -251,6 +414,7 @@ import type { ContributionData } from '../types/contributions';
 			}
 
 			function renderPlayer(target: HTMLElement, result: PlayerResult, hasLongestStreak: boolean): void {
+				target.querySelector<HTMLElement>('.graph-tooltip:popover-open')?.hidePopover();
 				target.replaceChildren();
 				if (!result.data) {
 					const error = document.createElement('p');
@@ -272,16 +436,32 @@ import type { ContributionData } from '../types/contributions';
 				const streak = document.createElement('p');
 				streak.className = `streak${hasLongestStreak ? ' longest-streak' : ''}`;
 				streak.textContent = `🔥 Longest Streak: ${longestStreak(data)} days`;
+				const graphRegion = document.createElement('div');
+				graphRegion.className = 'graph-region';
+				const instructions = document.createElement('p');
+				instructions.className = 'graph-instructions';
+				instructions.id = `${target.id}-graph-instructions`;
+				instructions.textContent =
+					'Arrow keys: left/right week, up/down day. Home/End: first/last date. Tab: exit. Esc: hide details.';
 				const graphViewport = document.createElement('div');
 				graphViewport.className = 'graph-viewport';
+				graphViewport.tabIndex = -1;
 				graphViewport.setAttribute('role', 'group');
 				graphViewport.setAttribute(
 					'aria-label',
 					`${result.username}: ${data.total_contributions} contributions from ${data.from} to ${data.to}`,
 				);
+				graphViewport.setAttribute('aria-describedby', instructions.id);
 				const graph = document.createElement('div');
 				graph.className = 'contribution-graph';
 				graph.style.gridTemplateColumns = `repeat(${data.weeks.length}, 12px)`;
+				const squares: HTMLElement[] = [];
+				const tooltip = document.createElement('p');
+				tooltip.id = `${target.id}-graph-tooltip`;
+				tooltip.className = 'graph-tooltip';
+				tooltip.setAttribute('role', 'tooltip');
+				tooltip.setAttribute('popover', 'manual');
+				tooltip.hidden = true;
 
 				for (const week of data.weeks) {
 					for (let weekday = 0; weekday < 7; weekday++) {
@@ -289,19 +469,136 @@ import type { ContributionData } from '../types/contributions';
 						const square = document.createElement('span');
 						square.className = 'contribution-day';
 						square.style.backgroundColor = data.colors_full[day?.level ?? 0] ?? data.colors_full[0];
+						square.style.color = square.style.backgroundColor;
 						const date = new Date(`${week.first_day}T00:00:00Z`);
 						date.setUTCDate(date.getUTCDate() + weekday);
 						const dateLabel = date.toISOString().slice(0, 10);
 						const count = day?.count ?? 0;
-						square.title = `${dateLabel}: ${count} contributions`;
-						square.setAttribute('aria-label', square.title);
-						square.dataset.tooltip = square.title;
-						square.tabIndex = 0;
+						square.dataset.tooltip = `${dateLabel}: ${count} contributions`;
+						square.setAttribute('role', 'img');
+						square.setAttribute('aria-label', square.dataset.tooltip);
+						square.tabIndex = squares.length === 0 ? 0 : -1;
+						squares.push(square);
 						graph.append(square);
 					}
 				}
 
+				let activeIndex = 0;
+				let hoveredSquare: HTMLElement | undefined;
+				let focusedSquare: HTMLElement | undefined;
+				let tooltipSquare: HTMLElement | undefined;
+				let tooltipDismissed = false;
+				let tooltipViewportEvents: AbortController | undefined;
+
+				function positionTooltip(): void {
+					if (!tooltipSquare || !tooltip.isConnected) return;
+					const viewportWidth = document.documentElement.clientWidth;
+					const viewportHeight = window.innerHeight;
+					tooltip.style.maxWidth = `${viewportWidth - 16}px`;
+					const cellBounds = tooltipSquare.getBoundingClientRect();
+					const tooltipBounds = tooltip.getBoundingClientRect();
+					const left = cellBounds.left + (cellBounds.width - tooltipBounds.width) / 2;
+					const above = cellBounds.top - tooltipBounds.height - 8;
+					const top = above >= 8 ? above : cellBounds.bottom + 8;
+					tooltip.style.left = `${Math.max(8, Math.min(left, viewportWidth - tooltipBounds.width - 8))}px`;
+					tooltip.style.top = `${Math.max(8, Math.min(top, viewportHeight - tooltipBounds.height - 8))}px`;
+				}
+
+				tooltip.addEventListener('beforetoggle', (event) => {
+					if ((event as ToggleEvent).newState === 'closed') {
+						tooltipViewportEvents?.abort();
+						tooltipViewportEvents = undefined;
+					}
+				});
+
+				function showTooltip(square?: HTMLElement): void {
+					tooltipSquare?.removeAttribute('aria-describedby');
+					tooltipSquare = tooltipDismissed ? undefined : square;
+					tooltip.textContent = tooltipSquare?.dataset.tooltip ?? '';
+					if (!tooltipSquare && tooltip.matches(':popover-open')) tooltip.hidePopover();
+					tooltip.hidden = !tooltipSquare;
+					if (!tooltipSquare) return;
+					tooltipSquare.setAttribute('aria-describedby', tooltip.id);
+					if (!tooltip.matches(':popover-open')) {
+						tooltip.showPopover();
+						tooltipViewportEvents = new AbortController();
+						const { signal } = tooltipViewportEvents;
+						window.addEventListener('scroll', positionTooltip, { capture: true, signal });
+						window.addEventListener('resize', positionTooltip, { signal });
+					}
+					positionTooltip();
+				}
+
+				function eventSquare(event: Event): HTMLElement | undefined {
+					const square = event.target;
+					return square instanceof HTMLElement && square.classList.contains('contribution-day')
+						? square
+						: undefined;
+				}
+
+				graph.addEventListener('pointerover', (event) => {
+					const square = eventSquare(event);
+					if (!square) return;
+					hoveredSquare = square;
+					tooltipDismissed = false;
+					showTooltip(square);
+				});
+				graphRegion.addEventListener('pointerleave', () => {
+					hoveredSquare = undefined;
+					showTooltip(focusedSquare);
+				});
+				graph.addEventListener('focusin', (event) => {
+					const square = eventSquare(event);
+					if (!square) return;
+					squares[activeIndex].tabIndex = -1;
+					activeIndex = squares.indexOf(square);
+					square.tabIndex = 0;
+					focusedSquare = square;
+					tooltipDismissed = false;
+					showTooltip(square);
+				});
+				graph.addEventListener('focusout', () => {
+					focusedSquare = undefined;
+					showTooltip(hoveredSquare);
+				});
+				graph.addEventListener('keydown', (event) => {
+					if (!eventSquare(event) || event.altKey || event.ctrlKey || event.metaKey) return;
+					if (event.key === 'Escape') {
+						tooltipDismissed = true;
+						showTooltip();
+						event.preventDefault();
+						return;
+					}
+					let nextIndex = activeIndex;
+					switch (event.key) {
+						case 'ArrowLeft':
+							if (activeIndex >= 7) nextIndex -= 7;
+							break;
+						case 'ArrowRight':
+							if (activeIndex + 7 < squares.length) nextIndex += 7;
+							break;
+						case 'ArrowUp':
+							if (activeIndex % 7 > 0) nextIndex--;
+							break;
+						case 'ArrowDown':
+							if (activeIndex % 7 < 6) nextIndex++;
+							break;
+						case 'Home':
+							nextIndex = 0;
+							break;
+						case 'End':
+							nextIndex = squares.length - 1;
+							break;
+						default:
+							return;
+					}
+					event.preventDefault();
+					squares[nextIndex].focus({ preventScroll: true });
+					squares[nextIndex].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+				});
+
 				graphViewport.append(graph);
+				graphRegion.append(instructions, graphViewport, tooltip);
 				const legend = document.createElement('div');
 				legend.className = 'legend';
 				const less = document.createElement('span');
@@ -317,20 +614,28 @@ import type { ContributionData } from '../types/contributions';
 					swatches.append(swatch);
 				}
 				legend.append(less, swatches, more);
-				target.append(username, total, range, graphViewport, streak, legend);
+				target.append(username, total, range, graphRegion, streak, legend);
 			}
 
 			async function runCountdown(): Promise<void> {
 				countdownOverlay.hidden = false;
-				for (const text of ['3...', '2...', '1...', '⚡ FIGHT! ⚡']) {
-					countdownOverlay.textContent = text;
-					await new Promise((resolve) => window.setTimeout(resolve, 1000));
+				try {
+					for (const text of ['3...', '2...', '1...', '⚡ FIGHT! ⚡']) {
+						countdownOverlay.textContent = text;
+						await new Promise((resolve) => window.setTimeout(resolve, 1000));
+					}
+				} finally {
+					countdownOverlay.hidden = true;
+					countdownOverlay.textContent = '';
 				}
-				countdownOverlay.hidden = true;
 			}
 
 			form.addEventListener('submit', async (event) => {
 				event.preventDefault();
+				if (battleInProgress) {
+					status.textContent = 'A battle is already in progress. Please wait.';
+					return;
+				}
 				const usernames = [playerOneInput, playerTwoInput].map((input) => input.value.trim());
 				const inputs = [playerOneInput, playerTwoInput];
 				let valid = true;
@@ -348,62 +653,110 @@ import type { ContributionData } from '../types/contributions';
 
 				if (!valid) {
 					status.textContent = '';
+					winnerBanner.hidden = true;
+					shareControls.hidden = true;
+					lastBattle = undefined;
+					resetShareFeedback();
 					inputs.find((input) => input.getAttribute('aria-invalid') === 'true')?.focus();
 					playSound('error');
 					return;
 				}
 
-				battleButton.disabled = true;
-				loading.hidden = false;
-				status.textContent = '';
-				winnerBanner.hidden = true;
-				shareControls.hidden = true;
-				results.hidden = true;
-				playSound('coin');
+				battleInProgress = true;
+				try {
+					battleButton.disabled = true;
+					loading.hidden = false;
+					status.textContent = '';
+					winnerBanner.hidden = true;
+					winnerBanner.textContent = '';
+					shareControls.hidden = true;
+					results.hidden = true;
+					lastBattle = undefined;
+					resetShareFeedback();
+					playerOneResult.replaceChildren();
+					playerTwoResult.replaceChildren();
+					playSound('coin');
 
-				const resultsPromise = Promise.all(usernames.map((username) => fetchPlayer(username)));
-				await runCountdown();
-				const [one, two] = await resultsPromise;
-				const oneStreak = one.data ? longestStreak(one.data) : 0;
-				const twoStreak = two.data ? longestStreak(two.data) : 0;
-				renderPlayer(document.querySelector<HTMLElement>('#player-one-result')!, one, oneStreak > twoStreak);
-				renderPlayer(document.querySelector<HTMLElement>('#player-two-result')!, two, twoStreak > oneStreak);
-				results.hidden = false;
-				loading.hidden = true;
-				battleButton.disabled = false;
+					const [players] = await Promise.all([
+						Promise.all(usernames.map((username) => fetchPlayer(username))),
+						runCountdown(),
+					]);
+					const streaks = players.map((player) => player.data ? longestStreak(player.data) : 0);
+					results.hidden = false;
+					players.forEach((player, index) => {
+						const target = [playerOneResult, playerTwoResult][index];
+						try {
+							renderPlayer(target, player, streaks[index] > streaks[1 - index]);
+						} catch {
+							const error = 'Unable to display contributions. Please try again.';
+							players[index] = { username: player.username, error };
+							const message = document.createElement('p');
+							message.className = 'result-error';
+							message.textContent = `${player.username}: ${error}`;
+							target.replaceChildren(message);
+						}
+					});
+					const [one, two] = players;
+					if (!one.data || !two.data) {
+						status.textContent = players.map((player) => player.data
+							? `${player.username}: ${player.data.total_contributions.toLocaleString()} contributions.`
+							: `${player.username}: ${player.error ?? 'Unable to load contributions.'}`,
+						).join(' ') + ' No winner could be determined. Please try again.';
+						playSound('error');
+						return;
+					}
 
-				if (!one.data || !two.data) {
-					status.textContent = 'One or both fighters could not load. Check the player cards and try again.';
-					playSound('error');
-					return;
-				}
-
-				const winner =
-					one.data.total_contributions === two.data.total_contributions
+					const isTie = one.data.total_contributions === two.data.total_contributions;
+					const winner = isTie
 						? 'Tie'
 						: one.data.total_contributions > two.data.total_contributions
 							? one.username
 							: two.username;
-				winnerBanner.textContent =
-					winner === 'Tie' ? "🤝 IT'S A TIE! 🤝" : `🏆 ${winner} WINS! 🏆`;
-				winnerBanner.hidden = false;
-				shareControls.hidden = false;
-				status.textContent = '';
-				const record: BattleRecord = {
-					playerOne: one.username,
-					playerTwo: two.username,
-					playerOneContributions: one.data.total_contributions,
-					playerTwoContributions: two.data.total_contributions,
-					winner,
-					playedAt: new Date().toISOString(),
-				};
-				lastBattle = record;
-				saveBattle(record);
-				playSound('powerup');
+					winnerBanner.textContent = isTie ? "🤝 IT'S A TIE! 🤝" : `🏆 ${winner} WINS! 🏆`;
+					winnerBanner.hidden = false;
+					shareControls.hidden = false;
+					const record: BattleRecord = {
+						playerOne: one.username,
+						playerTwo: two.username,
+						playerOneContributions: one.data.total_contributions,
+						playerTwoContributions: two.data.total_contributions,
+						winner,
+						playedAt: new Date().toISOString(),
+					};
+					lastBattle = record;
+					status.textContent = battleSummary(record);
+					saveBattle(record);
+					playSound('powerup');
+				} catch {
+					winnerBanner.hidden = true;
+					shareControls.hidden = true;
+					lastBattle = undefined;
+					status.textContent = 'The battle could not finish. Please try again.';
+					playSound('error');
+				} finally {
+					battleInProgress = false;
+					battleButton.disabled = false;
+					loading.hidden = true;
+					countdownOverlay.hidden = true;
+					countdownOverlay.textContent = '';
+				}
 			});
+
+			try {
+				const savedTheme = localStorage.getItem('mona-mayhem-theme');
+				if (savedTheme === 'alternate') {
+					root.dataset.theme = 'alternate';
+					themeToggle.setAttribute('aria-pressed', 'true');
+				} else if (savedTheme !== null) {
+					showStorageWarning('theme', 'The saved theme is invalid. Using the default theme until you choose a theme.');
+				}
+			} catch {
+				showStorageWarning('theme', 'Saved theme preferences are unavailable. Theme changes still work for this visit.');
+			}
+			renderHistory(readHistory().records);
 		</script>
 
-		<style>
+		<style is:global>
 			:root {
 				--color-background: #0a0a1a;
 				--color-surface: #15152b;
@@ -468,6 +821,11 @@ import type { ContributionData } from '../types/contributions';
 				margin-bottom: 36px;
 			}
 
+			.battle-status,
+			.winner-banner {
+				overflow-wrap: anywhere;
+			}
+
 			.eyebrow,
 			label,
 			button {
@@ -479,7 +837,7 @@ import type { ContributionData } from '../types/contributions';
 				margin: 20px 0;
 				font-size: clamp(2rem, 6vw, 4rem);
 				color: var(--color-green);
-				text-shadow: 0 0 12px var(--color-green), 0 0 32px rgb(95 237 131 / 60%);
+				text-shadow: 0 0 12px var(--color-green), 0 0 32px color-mix(in srgb, var(--color-green) 60%, transparent);
 				animation: title-pulse 3s ease-in-out infinite, electric-flicker 7s linear infinite;
 			}
 
@@ -497,6 +855,7 @@ import type { ContributionData } from '../types/contributions';
 
 			.player-input {
 				flex: 1;
+				min-width: 0;
 				animation: float-in 600ms ease-out both;
 			}
 
@@ -524,16 +883,17 @@ import type { ContributionData } from '../types/contributions';
 			input:focus,
 			button:hover {
 				border-color: var(--color-purple);
-				box-shadow: 0 0 14px rgb(138 43 226 / 65%);
+				box-shadow: 0 0 14px color-mix(in srgb, var(--color-purple) 65%, transparent);
 				outline: none;
 			}
 
 			button {
 				width: auto;
-				min-width: 220px;
+				min-width: min(220px, 100%);
+				max-width: 100%;
 				cursor: pointer;
 				color: var(--color-green);
-				box-shadow: 0 0 12px rgb(95 237 131 / 30%);
+				box-shadow: 0 0 12px color-mix(in srgb, var(--color-green) 30%, transparent);
 			}
 
 			button:disabled {
@@ -542,8 +902,7 @@ import type { ContributionData } from '../types/contributions';
 			}
 
 			button:focus-visible,
-			input:focus-visible,
-			.contribution-day:focus-visible {
+			input:focus-visible {
 				outline: 3px solid var(--color-purple);
 				outline-offset: 4px;
 			}
@@ -557,6 +916,7 @@ import type { ContributionData } from '../types/contributions';
 
 			.input-error,
 			.result-error {
+				overflow-wrap: anywhere;
 				color: var(--color-error);
 				text-shadow: 0 0 10px var(--color-error);
 			}
@@ -583,8 +943,16 @@ import type { ContributionData } from '../types/contributions';
 				background: var(--color-surface);
 				border: 1px solid var(--color-green);
 				border-radius: 12px;
-				box-shadow: 0 0 20px rgb(95 237 131 / 12%);
+				box-shadow: 0 0 20px color-mix(in srgb, var(--color-green) 12%, transparent);
 				isolation: isolate;
+			}
+
+			.results:not([hidden]) .result-card {
+				animation: float-in 600ms ease-out both;
+			}
+
+			.results:not([hidden]) .result-card:last-child {
+				animation-delay: 120ms;
 			}
 
 			.result-card::before,
@@ -601,8 +969,8 @@ import type { ContributionData } from '../types/contributions';
 				background: linear-gradient(
 					110deg,
 					transparent 20%,
-					rgb(95 237 131 / 9%) 45%,
-					rgb(138 43 226 / 12%) 50%,
+					color-mix(in srgb, var(--color-green) 9%, transparent) 45%,
+					color-mix(in srgb, var(--color-purple) 12%, transparent) 50%,
 					transparent 75%
 				);
 				background-size: 240% 100%;
@@ -611,7 +979,12 @@ import type { ContributionData } from '../types/contributions';
 
 			.result-card::after {
 				inset: -1px;
-				box-shadow: 0 0 22px rgb(138 43 226 / 15%);
+				box-shadow: 0 0 22px color-mix(in srgb, var(--color-purple) 15%, transparent);
+			}
+
+			.result-content {
+				min-width: 0;
+				overflow-wrap: anywhere;
 			}
 
 			.result-content h2 {
@@ -690,6 +1063,7 @@ import type { ContributionData } from '../types/contributions';
 			}
 
 			.legend-swatch {
+				flex: 0 0 12px;
 				width: 12px;
 				height: 12px;
 				border-radius: 2px;
@@ -723,6 +1097,7 @@ import type { ContributionData } from '../types/contributions';
 				display: grid;
 				gap: 10px;
 				padding-left: 24px;
+				overflow-wrap: anywhere;
 				font: 12px/1.8 Arial, sans-serif;
 			}
 
@@ -737,9 +1112,23 @@ import type { ContributionData } from '../types/contributions';
 				margin: 18px auto;
 			}
 
+			.graph-region {
+				min-width: 0;
+				margin-top: 24px;
+			}
+
+			.graph-instructions {
+				margin: 0 0 8px;
+				font: 11px/1.6 Arial, sans-serif;
+			}
+
 			.graph-viewport {
+				max-width: 100%;
 				overflow-x: auto;
-				padding-bottom: 8px;
+				padding: 6px;
+				overscroll-behavior-inline: contain;
+				scrollbar-color: var(--color-purple) var(--color-surface);
+				scrollbar-width: thin;
 			}
 
 			.contribution-graph {
@@ -748,7 +1137,7 @@ import type { ContributionData } from '../types/contributions';
 				grid-auto-flow: column;
 				gap: 3px;
 				width: max-content;
-				margin: 24px auto 0;
+				margin: 0 auto;
 			}
 
 			.contribution-day {
@@ -756,39 +1145,36 @@ import type { ContributionData } from '../types/contributions';
 				width: 12px;
 				height: 12px;
 				border-radius: 2px;
-				transition: transform 120ms ease, box-shadow 120ms ease;
+				scroll-margin: 6px;
+				transition: box-shadow 120ms ease;
 			}
 
 			.contribution-day:hover,
 			.contribution-day:focus-visible {
 				z-index: 1;
-				transform: scale(1.35);
 				box-shadow: 0 0 10px currentColor;
 			}
 
-			.contribution-day::after {
-				position: absolute;
-				bottom: calc(100% + 8px);
-				left: 50%;
-				z-index: 2;
+			.contribution-day:focus-visible {
+				outline: 2px solid var(--color-text);
+				outline-offset: 1px;
+				box-shadow: 0 0 0 4px var(--color-purple), 0 0 12px currentColor;
+			}
+
+			.graph-tooltip {
+				position: fixed;
+				inset: auto;
 				width: max-content;
+				max-width: calc(100vw - 16px);
+				margin: 0;
 				padding: 6px 8px;
 				color: var(--color-text);
 				background: var(--color-background);
 				border: 1px solid var(--color-green);
 				border-radius: 4px;
-				content: attr(data-tooltip);
-				font: 9px Arial, sans-serif;
-				opacity: 0;
-				pointer-events: none;
-				transform: translate(-50%, 4px);
-				transition: opacity 120ms ease, transform 120ms ease;
-			}
-
-			.contribution-day:hover::after,
-			.contribution-day:focus-visible::after {
-				opacity: 1;
-				transform: translate(-50%, 0);
+				box-shadow: 0 0 10px color-mix(in srgb, var(--color-green) 25%, transparent);
+				font: 11px/1.6 Arial, sans-serif;
+				overflow-wrap: anywhere;
 			}
 
 			@keyframes title-pulse {
@@ -913,9 +1299,8 @@ import type { ContributionData } from '../types/contributions';
 				*::before,
 				*::after {
 					scroll-behavior: auto !important;
-					animation-duration: 0.01ms !important;
-					animation-iteration-count: 1 !important;
-					transition-duration: 0.01ms !important;
+					animation: none !important;
+					transition: none !important;
 				}
 			}
 		</style>
