@@ -27,3 +27,7 @@ There are no configured test or lint scripts, so no single-test command is avail
 - Keep server-only upstream requests in API routes. Type handlers with Astro's `APIRoute` and keep shared API data types in `src/types/`.
 - The project uses ES modules and strict TypeScript. Follow existing Astro component and formatting conventions.
 - Keep changes within the requested scope. Do not modify `docs/`, `workshop/`, `localizations/`, `scripts/`, `.github/workflows/`, or `.github/skills/`.
+
+## UI design
+
+Use the retro arcade palette: background `#0a0a1a`, neon green `#5fed83`, purple `#8a2be2`, and error pink `#ff3366`, with Press Start 2P for the display font. Keep new UI consistent with the neon atmosphere; prefer restrained glow and the existing motion style, and disable animations when `prefers-reduced-motion` is enabled.

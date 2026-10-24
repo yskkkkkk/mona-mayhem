@@ -10,6 +10,12 @@ import type { ContributionData } from '../types/contributions';
 		<meta name="viewport" content="width=device-width" />
 		<meta name="generator" content={Astro.generator} />
 		<meta name="theme-color" content="#0a0a1a" />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap"
+			rel="stylesheet"
+		/>
 		<title>Mona Mayhem — GitHub Contribution Battle Arena</title>
 	</head>
 	<body>
@@ -175,9 +181,17 @@ import type { ContributionData } from '../types/contributions';
 
 		<style>
 			:root {
-				font-family: Arial, sans-serif;
-				color: #f5f5f5;
-				background: #0a0a1a;
+				--color-background: #0a0a1a;
+				--color-surface: #15152b;
+				--color-green: #5fed83;
+				--color-purple: #8a2be2;
+				--color-error: #ff3366;
+				--color-text: #f5f5f5;
+				font-family: 'Press Start 2P', monospace;
+				color: var(--color-text);
+				background: var(--color-background);
+				font-size: 12px;
+				line-height: 1.8;
 			}
 
 			* {
@@ -189,7 +203,24 @@ import type { ContributionData } from '../types/contributions';
 				min-height: 100vh;
 			}
 
+			body::before {
+				position: fixed;
+				z-index: 10;
+				inset: 0;
+				background: repeating-linear-gradient(
+					to bottom,
+					transparent 0,
+					transparent 2px,
+					rgb(0 0 0 / 30%) 3px,
+					transparent 4px
+				);
+				content: '';
+				opacity: 0.03;
+				pointer-events: none;
+			}
+
 			.arena {
+				position: relative;
 				width: min(1100px, 100%);
 				margin: 0 auto;
 				padding: 64px 24px;
@@ -207,7 +238,6 @@ import type { ContributionData } from '../types/contributions';
 			.eyebrow,
 			label,
 			button {
-				font-weight: 700;
 				letter-spacing: 0.08em;
 				text-transform: uppercase;
 			}
@@ -215,10 +245,14 @@ import type { ContributionData } from '../types/contributions';
 			h1 {
 				margin: 20px 0;
 				font-size: clamp(2rem, 6vw, 4rem);
+				color: var(--color-green);
+				text-shadow: 0 0 12px var(--color-green), 0 0 32px rgb(95 237 131 / 60%);
+				animation: title-pulse 3s ease-in-out infinite, electric-flicker 7s linear infinite;
 			}
 
 			.subtitle {
 				font-size: 1.1rem;
+				color: var(--color-purple);
 			}
 
 			.players {
@@ -230,6 +264,11 @@ import type { ContributionData } from '../types/contributions';
 
 			.player-input {
 				flex: 1;
+				animation: float-in 600ms ease-out both;
+			}
+
+			.player-input:nth-child(2) {
+				animation-delay: 120ms;
 			}
 
 			label {
@@ -242,15 +281,26 @@ import type { ContributionData } from '../types/contributions';
 				width: 100%;
 				padding: 14px;
 				color: inherit;
-				background: #15152b;
-				border: 1px solid #5fed83;
+				background: var(--color-surface);
+				border: 1px solid var(--color-green);
 				border-radius: 8px;
+				font: inherit;
+				transition: box-shadow 180ms ease, border-color 180ms ease;
+			}
+
+			input:focus,
+			button:hover {
+				border-color: var(--color-purple);
+				box-shadow: 0 0 14px rgb(138 43 226 / 65%);
+				outline: none;
 			}
 
 			button {
 				width: auto;
 				min-width: 220px;
 				cursor: pointer;
+				color: var(--color-green);
+				box-shadow: 0 0 12px rgb(95 237 131 / 30%);
 			}
 
 			button:disabled {
@@ -260,7 +310,8 @@ import type { ContributionData } from '../types/contributions';
 
 			.input-error,
 			.result-error {
-				color: #ff3366;
+				color: var(--color-error);
+				text-shadow: 0 0 10px var(--color-error);
 			}
 
 			.results {
@@ -271,19 +322,52 @@ import type { ContributionData } from '../types/contributions';
 			}
 
 			.result-card {
+				position: relative;
 				min-width: 0;
 				padding: 24px;
-				background: #15152b;
-				border: 1px solid #5fed83;
+				background: var(--color-surface);
+				border: 1px solid var(--color-green);
 				border-radius: 12px;
+				box-shadow: 0 0 20px rgb(95 237 131 / 12%);
+				isolation: isolate;
+			}
+
+			.result-card::before,
+			.result-card::after {
+				position: absolute;
+				z-index: -1;
+				inset: 0;
+				border-radius: inherit;
+				content: '';
+				pointer-events: none;
+			}
+
+			.result-card::before {
+				background: linear-gradient(
+					110deg,
+					transparent 20%,
+					rgb(95 237 131 / 9%) 45%,
+					rgb(138 43 226 / 12%) 50%,
+					transparent 75%
+				);
+				background-size: 240% 100%;
+				animation: card-shine 6s linear infinite;
+			}
+
+			.result-card::after {
+				inset: -1px;
+				box-shadow: 0 0 22px rgb(138 43 226 / 15%);
 			}
 
 			.result-content h2 {
 				overflow-wrap: anywhere;
+				color: var(--color-green);
+				font-size: 1.1rem;
 			}
 
 			.total {
 				font-size: 1.2rem;
+				color: var(--color-green);
 			}
 
 			.date-range {
@@ -291,7 +375,18 @@ import type { ContributionData } from '../types/contributions';
 			}
 
 			.versus {
-				font-weight: 900;
+				padding: 12px;
+				color: transparent;
+				background: linear-gradient(120deg, var(--color-green), var(--color-purple), var(--color-green));
+				background-size: 220% 220%;
+				background-clip: text;
+				filter: drop-shadow(0 0 10px var(--color-purple));
+				animation: versus-pulse 900ms ease-in-out infinite, versus-gradient 4s linear infinite;
+			}
+
+			.loading {
+				color: var(--color-green);
+				animation: loading-pulse 900ms ease-in-out infinite;
 			}
 
 			.graph-viewport {
@@ -312,6 +407,85 @@ import type { ContributionData } from '../types/contributions';
 				width: 12px;
 				height: 12px;
 				border-radius: 2px;
+				transition: transform 120ms ease, box-shadow 120ms ease;
+			}
+
+			.contribution-day:hover,
+			.contribution-day:focus-visible {
+				z-index: 1;
+				transform: scale(1.35);
+				box-shadow: 0 0 10px currentColor;
+			}
+
+			@keyframes title-pulse {
+				0%,
+				100% {
+					filter: brightness(1);
+				}
+				50% {
+					filter: brightness(1.35);
+				}
+			}
+
+			@keyframes electric-flicker {
+				0%,
+				96%,
+				98%,
+				100% {
+					opacity: 1;
+				}
+				97%,
+				99% {
+					opacity: 0.72;
+				}
+			}
+
+			@keyframes versus-pulse {
+				50% {
+					transform: scale(1.25);
+					filter: drop-shadow(0 0 18px var(--color-purple));
+				}
+			}
+
+			@keyframes versus-gradient {
+				to {
+					background-position: 220% 0;
+				}
+			}
+
+			@keyframes card-shine {
+				to {
+					background-position: -240% 0;
+				}
+			}
+
+			@keyframes float-in {
+				from {
+					opacity: 0;
+					transform: translateY(14px);
+				}
+				to {
+					opacity: 1;
+					transform: translateY(0);
+				}
+			}
+
+			@keyframes loading-pulse {
+				50% {
+					color: var(--color-purple);
+					text-shadow: 0 0 12px var(--color-purple);
+				}
+			}
+
+			@media (prefers-reduced-motion: reduce) {
+				*,
+				*::before,
+				*::after {
+					scroll-behavior: auto !important;
+					animation-duration: 0.01ms !important;
+					animation-iteration-count: 1 !important;
+					transition-duration: 0.01ms !important;
+				}
 			}
 		</style>
 	</body>
