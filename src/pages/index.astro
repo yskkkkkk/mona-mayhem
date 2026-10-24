@@ -24,28 +24,31 @@ import type { ContributionData } from '../types/contributions';
 				<p class="eyebrow">INSERT COIN TO COMPARE</p>
 				<h1>Mona Mayhem</h1>
 				<p class="subtitle">GitHub Contribution Battle Arena</p>
+				<button id="theme-toggle" class="utility-button" type="button" aria-pressed="false">
+					⚡ Switch Theme
+				</button>
 			</header>
 
 			<form id="battle-form" novalidate>
 				<div class="players">
 					<div class="player-input">
 						<label for="player-one">Player 1</label>
-						<input id="player-one" name="player-one" autocomplete="off" spellcheck="false" placeholder="octocat" />
-						<p class="input-error" id="player-one-error"></p>
+						<input id="player-one" name="player-one" autocomplete="off" spellcheck="false" placeholder="octocat" aria-describedby="player-one-error" aria-invalid="false" />
+						<p class="input-error" id="player-one-error" aria-live="polite"></p>
 					</div>
 					<div class="player-input">
 						<label for="player-two">Player 2</label>
-						<input id="player-two" name="player-two" autocomplete="off" spellcheck="false" placeholder="torvalds" />
-						<p class="input-error" id="player-two-error"></p>
+						<input id="player-two" name="player-two" autocomplete="off" spellcheck="false" placeholder="torvalds" aria-describedby="player-two-error" aria-invalid="false" />
+						<p class="input-error" id="player-two-error" aria-live="polite"></p>
 					</div>
 				</div>
 				<button id="battle-button" type="submit">⚔ BATTLE ⚔</button>
 			</form>
 
-			<p id="loading" class="loading" hidden>Loading battle data...</p>
-			<p id="battle-status" class="battle-status" role="status"></p>
+			<p id="loading" class="loading" role="status" aria-live="polite" hidden>Loading battle data...</p>
+			<p id="battle-status" class="battle-status" role="status" aria-live="polite"></p>
 
-			<section id="results" class="results" aria-label="Battle results" hidden>
+			<section id="results" class="results" aria-label="Battle results" aria-live="polite" hidden>
 				<article class="result-card" id="player-one-card" aria-label="Player 1 contribution results">
 					<div class="result-content" id="player-one-result"></div>
 				</article>
@@ -63,10 +66,30 @@ import type { ContributionData } from '../types/contributions';
 			const playerOneInput = document.querySelector<HTMLInputElement>('#player-one')!;
 			const playerTwoInput = document.querySelector<HTMLInputElement>('#player-two')!;
 			const battleButton = document.querySelector<HTMLButtonElement>('#battle-button')!;
+			const themeToggle = document.querySelector<HTMLButtonElement>('#theme-toggle')!;
 			const results = document.querySelector<HTMLElement>('#results')!;
 			const loading = document.querySelector<HTMLElement>('#loading')!;
 			const status = document.querySelector<HTMLElement>('#battle-status')!;
 			const usernamePattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+			const root = document.documentElement;
+			const savedTheme = localStorage.getItem('mona-mayhem-theme');
+			if (savedTheme === 'alternate') {
+				root.dataset.theme = 'alternate';
+				themeToggle.setAttribute('aria-pressed', 'true');
+				themeToggle.textContent = '⚡ Switch Theme';
+			}
+
+			themeToggle.addEventListener('click', () => {
+				const isAlternate = root.dataset.theme !== 'alternate';
+				if (isAlternate) {
+					root.dataset.theme = 'alternate';
+					localStorage.setItem('mona-mayhem-theme', 'alternate');
+				} else {
+					delete root.dataset.theme;
+					localStorage.removeItem('mona-mayhem-theme');
+				}
+				themeToggle.setAttribute('aria-pressed', String(isAlternate));
+			});
 
 			type PlayerResult = { username: string; data?: ContributionData; error?: string };
 
@@ -74,6 +97,11 @@ import type { ContributionData } from '../types/contributions';
 				const error = document.querySelector<HTMLElement>(`#${input.id}-error`)!;
 				error.textContent = message;
 				input.setAttribute('aria-invalid', message ? 'true' : 'false');
+				error.classList.remove('shake');
+				if (message) {
+					void error.offsetWidth;
+					error.classList.add('shake');
+				}
 			}
 
 			async function fetchPlayer(username: string): Promise<PlayerResult> {
@@ -113,7 +141,7 @@ import type { ContributionData } from '../types/contributions';
 				range.textContent = `${data.from} — ${data.to}`;
 				const graphViewport = document.createElement('div');
 				graphViewport.className = 'graph-viewport';
-				graphViewport.setAttribute('role', 'img');
+				graphViewport.setAttribute('role', 'group');
 				graphViewport.setAttribute(
 					'aria-label',
 					`${result.username}: ${data.total_contributions} contributions from ${data.from} to ${data.to}`,
@@ -134,6 +162,7 @@ import type { ContributionData } from '../types/contributions';
 						const count = day?.count ?? 0;
 						square.title = `${dateLabel}: ${count} contributions`;
 						square.setAttribute('aria-label', square.title);
+						square.dataset.tooltip = square.title;
 						square.tabIndex = 0;
 						graph.append(square);
 					}
@@ -162,6 +191,7 @@ import type { ContributionData } from '../types/contributions';
 
 				if (!valid) {
 					status.textContent = '';
+					inputs.find((input) => input.getAttribute('aria-invalid') === 'true')?.focus();
 					return;
 				}
 
@@ -192,6 +222,11 @@ import type { ContributionData } from '../types/contributions';
 				background: var(--color-background);
 				font-size: 12px;
 				line-height: 1.8;
+			}
+
+			:root[data-theme='alternate'] {
+				--color-green: #00f5ff;
+				--color-purple: #ff6b35;
 			}
 
 			* {
@@ -308,10 +343,32 @@ import type { ContributionData } from '../types/contributions';
 				opacity: 0.6;
 			}
 
+			button:focus-visible,
+			input:focus-visible,
+			.contribution-day:focus-visible {
+				outline: 3px solid var(--color-purple);
+				outline-offset: 4px;
+			}
+
+			.utility-button {
+				min-width: 0;
+				margin-top: 12px;
+				padding: 10px 14px;
+				font-size: 0.7rem;
+			}
+
 			.input-error,
 			.result-error {
 				color: var(--color-error);
 				text-shadow: 0 0 10px var(--color-error);
+			}
+
+			.input-error:empty {
+				display: none;
+			}
+
+			.input-error.shake {
+				animation: error-shake 320ms ease-in-out;
 			}
 
 			.results {
@@ -404,6 +461,7 @@ import type { ContributionData } from '../types/contributions';
 			}
 
 			.contribution-day {
+				position: relative;
 				width: 12px;
 				height: 12px;
 				border-radius: 2px;
@@ -415,6 +473,31 @@ import type { ContributionData } from '../types/contributions';
 				z-index: 1;
 				transform: scale(1.35);
 				box-shadow: 0 0 10px currentColor;
+			}
+
+			.contribution-day::after {
+				position: absolute;
+				bottom: calc(100% + 8px);
+				left: 50%;
+				z-index: 2;
+				width: max-content;
+				padding: 6px 8px;
+				color: var(--color-text);
+				background: var(--color-background);
+				border: 1px solid var(--color-green);
+				border-radius: 4px;
+				content: attr(data-tooltip);
+				font: 9px Arial, sans-serif;
+				opacity: 0;
+				pointer-events: none;
+				transform: translate(-50%, 4px);
+				transition: opacity 120ms ease, transform 120ms ease;
+			}
+
+			.contribution-day:hover::after,
+			.contribution-day:focus-visible::after {
+				opacity: 1;
+				transform: translate(-50%, 0);
 			}
 
 			@keyframes title-pulse {
@@ -474,6 +557,44 @@ import type { ContributionData } from '../types/contributions';
 				50% {
 					color: var(--color-purple);
 					text-shadow: 0 0 12px var(--color-purple);
+				}
+			}
+
+			@keyframes error-shake {
+				25% {
+					transform: translateX(-5px);
+				}
+				75% {
+					transform: translateX(5px);
+				}
+			}
+
+			@media (max-width: 1024px) {
+				.results {
+					grid-template-columns: minmax(0, 1fr);
+				}
+
+				.versus {
+					justify-self: center;
+				}
+			}
+
+			@media (max-width: 768px) {
+				:root {
+					font-size: 10px;
+				}
+
+				.arena {
+					padding: 40px 16px;
+				}
+
+				.players {
+					flex-direction: column;
+					gap: 12px;
+				}
+
+				.result-card {
+					padding: 16px;
 				}
 			}
 
