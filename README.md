@@ -1,5 +1,30 @@
 🌐 English | [Español](README.es.md) | [Português (Brasil)](README.pt_BR.md) | [한국어](README.ko.md)
 
+# Mona Mayhem — GitHub Contribution Battle Arena
+
+Compare two GitHub users in a retro arcade battle. The Astro server app fetches contribution data through a server-side API proxy and displays contribution graphs, streaks, and a battle winner.
+
+## Run locally
+
+Requires Node.js and npm. From the repository root:
+
+```bash
+npm ci
+npm run dev
+```
+
+Open [http://localhost:4321](http://localhost:4321), enter two GitHub usernames, and start a battle.
+
+## Features
+
+- Side-by-side contribution graphs with daily tooltips and color-level legends
+- Contribution totals, date ranges, longest streaks, and a winner banner
+- Alternate neon theme, recent battle history, optional synthesized sound, and shareable results
+
+## Contribution API
+
+`GET /api/contributions/{username}` proxies GitHub's `https://github.com/{username}.contribs` endpoint from the server, avoiding browser CORS restrictions. Valid usernames receive the upstream JSON, including `from`, `to`, `total_contributions`, `colors_full`, `weeks`, and `months`. Invalid usernames return `400`, missing GitHub users return `404`, and upstream failures return `502`. Successful responses are cached in memory for 10 minutes.
+
 # 🎮 Mona Mayhem
 
 **VS Code & GitHub Copilot CLI Workshop** — Build a GitHub Contribution Battle Arena
