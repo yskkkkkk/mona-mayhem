@@ -1,17 +1,318 @@
 ---
-
+import type { ContributionData } from '../types/contributions';
 ---
 
+<!doctype html>
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
 		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 		<meta name="viewport" content="width=device-width" />
 		<meta name="generator" content={Astro.generator} />
-		<title>Mona Mayhem</title>
+		<meta name="theme-color" content="#0a0a1a" />
+		<title>Mona Mayhem — GitHub Contribution Battle Arena</title>
 	</head>
 	<body>
-		<h1>Mona Mayhem</h1>
-		<p>Welcome to Mona Mayhem! Time to build a GitHub Contribution Battle Arena.</p>
+		<main class="arena">
+			<header class="hero">
+				<p class="eyebrow">INSERT COIN TO COMPARE</p>
+				<h1>Mona Mayhem</h1>
+				<p class="subtitle">GitHub Contribution Battle Arena</p>
+			</header>
+
+			<form id="battle-form" novalidate>
+				<div class="players">
+					<div class="player-input">
+						<label for="player-one">Player 1</label>
+						<input id="player-one" name="player-one" autocomplete="off" spellcheck="false" placeholder="octocat" />
+						<p class="input-error" id="player-one-error"></p>
+					</div>
+					<div class="player-input">
+						<label for="player-two">Player 2</label>
+						<input id="player-two" name="player-two" autocomplete="off" spellcheck="false" placeholder="torvalds" />
+						<p class="input-error" id="player-two-error"></p>
+					</div>
+				</div>
+				<button id="battle-button" type="submit">⚔ BATTLE ⚔</button>
+			</form>
+
+			<p id="loading" class="loading" hidden>Loading battle data...</p>
+			<p id="battle-status" class="battle-status" role="status"></p>
+
+			<section id="results" class="results" aria-label="Battle results" hidden>
+				<article class="result-card" id="player-one-card" aria-label="Player 1 contribution results">
+					<div class="result-content" id="player-one-result"></div>
+				</article>
+				<div class="versus" aria-label="versus">VS</div>
+				<article class="result-card" id="player-two-card" aria-label="Player 2 contribution results">
+					<div class="result-content" id="player-two-result"></div>
+				</article>
+			</section>
+		</main>
+
+		<script>
+			import type { ContributionData } from '../types/contributions';
+
+			const form = document.querySelector<HTMLFormElement>('#battle-form')!;
+			const playerOneInput = document.querySelector<HTMLInputElement>('#player-one')!;
+			const playerTwoInput = document.querySelector<HTMLInputElement>('#player-two')!;
+			const battleButton = document.querySelector<HTMLButtonElement>('#battle-button')!;
+			const results = document.querySelector<HTMLElement>('#results')!;
+			const loading = document.querySelector<HTMLElement>('#loading')!;
+			const status = document.querySelector<HTMLElement>('#battle-status')!;
+			const usernamePattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+
+			type PlayerResult = { username: string; data?: ContributionData; error?: string };
+
+			function showInputError(input: HTMLInputElement, message: string): void {
+				const error = document.querySelector<HTMLElement>(`#${input.id}-error`)!;
+				error.textContent = message;
+				input.setAttribute('aria-invalid', message ? 'true' : 'false');
+			}
+
+			async function fetchPlayer(username: string): Promise<PlayerResult> {
+				try {
+					const response = await fetch(`/api/contributions/${encodeURIComponent(username)}`);
+					const body = (await response.json()) as ContributionData | { error: string };
+					if (!response.ok) {
+						return {
+							username,
+							error: 'error' in body ? body.error : 'Unable to load contributions.',
+						};
+					}
+					return { username, data: body as ContributionData };
+				} catch {
+					return { username, error: 'Unable to reach the contribution service.' };
+				}
+			}
+
+			function renderPlayer(target: HTMLElement, result: PlayerResult): void {
+				target.replaceChildren();
+				if (!result.data) {
+					const error = document.createElement('p');
+					error.className = 'result-error';
+					error.textContent = `${result.username}: ${result.error ?? 'Unable to load contributions.'}`;
+					target.append(error);
+					return;
+				}
+
+				const { data } = result;
+				const username = document.createElement('h2');
+				username.textContent = result.username;
+				const total = document.createElement('p');
+				total.className = 'total';
+				total.textContent = `${data.total_contributions.toLocaleString()} contributions`;
+				const range = document.createElement('p');
+				range.className = 'date-range';
+				range.textContent = `${data.from} — ${data.to}`;
+				const graphViewport = document.createElement('div');
+				graphViewport.className = 'graph-viewport';
+				graphViewport.setAttribute('role', 'img');
+				graphViewport.setAttribute(
+					'aria-label',
+					`${result.username}: ${data.total_contributions} contributions from ${data.from} to ${data.to}`,
+				);
+				const graph = document.createElement('div');
+				graph.className = 'contribution-graph';
+				graph.style.gridTemplateColumns = `repeat(${data.weeks.length}, 12px)`;
+
+				for (const week of data.weeks) {
+					for (let weekday = 0; weekday < 7; weekday++) {
+						const day = week.contribution_days.find((entry) => entry.weekday === weekday);
+						const square = document.createElement('span');
+						square.className = 'contribution-day';
+						square.style.backgroundColor = data.colors_full[day?.level ?? 0] ?? data.colors_full[0];
+						const date = new Date(`${week.first_day}T00:00:00`);
+						date.setDate(date.getDate() + weekday);
+						const dateLabel = date.toISOString().slice(0, 10);
+						const count = day?.count ?? 0;
+						square.title = `${dateLabel}: ${count} contributions`;
+						square.setAttribute('aria-label', square.title);
+						square.tabIndex = 0;
+						graph.append(square);
+					}
+				}
+
+				graphViewport.append(graph);
+				target.append(username, total, range, graphViewport);
+			}
+
+			form.addEventListener('submit', async (event) => {
+				event.preventDefault();
+				const usernames = [playerOneInput, playerTwoInput].map((input) => input.value.trim());
+				const inputs = [playerOneInput, playerTwoInput];
+				let valid = true;
+
+				inputs.forEach((input, index) => {
+					const username = usernames[index];
+					const message = !username
+						? 'Please enter a GitHub username.'
+						: !usernamePattern.test(username)
+							? 'Use 1–39 letters, numbers, or hyphens; no leading or trailing hyphen.'
+							: '';
+					showInputError(input, message);
+					if (message) valid = false;
+				});
+
+				if (!valid) {
+					status.textContent = '';
+					return;
+				}
+
+				battleButton.disabled = true;
+				loading.hidden = false;
+				status.textContent = '';
+				results.hidden = true;
+
+				const [one, two] = await Promise.all(usernames.map((username) => fetchPlayer(username)));
+				renderPlayer(document.querySelector<HTMLElement>('#player-one-result')!, one);
+				renderPlayer(document.querySelector<HTMLElement>('#player-two-result')!, two);
+				results.hidden = false;
+				loading.hidden = true;
+				battleButton.disabled = false;
+			});
+		</script>
+
+		<style>
+			:root {
+				font-family: Arial, sans-serif;
+				color: #f5f5f5;
+				background: #0a0a1a;
+			}
+
+			* {
+				box-sizing: border-box;
+			}
+
+			body {
+				margin: 0;
+				min-height: 100vh;
+			}
+
+			.arena {
+				width: min(1100px, 100%);
+				margin: 0 auto;
+				padding: 64px 24px;
+				text-align: center;
+			}
+
+			.hero,
+			#battle-form,
+			.results,
+			.loading,
+			.battle-status {
+				margin-bottom: 36px;
+			}
+
+			.eyebrow,
+			label,
+			button {
+				font-weight: 700;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+			}
+
+			h1 {
+				margin: 20px 0;
+				font-size: clamp(2rem, 6vw, 4rem);
+			}
+
+			.subtitle {
+				font-size: 1.1rem;
+			}
+
+			.players {
+				display: flex;
+				gap: 24px;
+				margin-bottom: 24px;
+				text-align: left;
+			}
+
+			.player-input {
+				flex: 1;
+			}
+
+			label {
+				display: block;
+				margin-bottom: 10px;
+			}
+
+			input,
+			button {
+				width: 100%;
+				padding: 14px;
+				color: inherit;
+				background: #15152b;
+				border: 1px solid #5fed83;
+				border-radius: 8px;
+			}
+
+			button {
+				width: auto;
+				min-width: 220px;
+				cursor: pointer;
+			}
+
+			button:disabled {
+				cursor: wait;
+				opacity: 0.6;
+			}
+
+			.input-error,
+			.result-error {
+				color: #ff3366;
+			}
+
+			.results {
+				display: grid;
+				grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+				align-items: center;
+				gap: 24px;
+			}
+
+			.result-card {
+				min-width: 0;
+				padding: 24px;
+				background: #15152b;
+				border: 1px solid #5fed83;
+				border-radius: 12px;
+			}
+
+			.result-content h2 {
+				overflow-wrap: anywhere;
+			}
+
+			.total {
+				font-size: 1.2rem;
+			}
+
+			.date-range {
+				font-size: 0.85rem;
+			}
+
+			.versus {
+				font-weight: 900;
+			}
+
+			.graph-viewport {
+				overflow-x: auto;
+				padding-bottom: 8px;
+			}
+
+			.contribution-graph {
+				display: grid;
+				grid-template-rows: repeat(7, 12px);
+				grid-auto-flow: column;
+				gap: 3px;
+				width: max-content;
+				margin: 24px auto 0;
+			}
+
+			.contribution-day {
+				width: 12px;
+				height: 12px;
+				border-radius: 2px;
+			}
+		</style>
 	</body>
 </html>
