@@ -27,6 +27,9 @@ import type { ContributionData } from '../types/contributions';
 				<button id="theme-toggle" class="utility-button" type="button" aria-pressed="false">
 					⚡ Switch Theme
 				</button>
+				<button id="sound-toggle" class="utility-button" type="button" aria-pressed="true">
+					🔇 Sound: Muted
+				</button>
 			</header>
 
 			<form id="battle-form" novalidate>
@@ -47,6 +50,8 @@ import type { ContributionData } from '../types/contributions';
 
 			<p id="loading" class="loading" role="status" aria-live="polite" hidden>Loading battle data...</p>
 			<p id="battle-status" class="battle-status" role="status" aria-live="polite"></p>
+			<div id="countdown-overlay" class="countdown-overlay" role="status" aria-live="assertive" hidden></div>
+			<p id="winner-banner" class="winner-banner" role="status" aria-live="polite" hidden></p>
 
 			<section id="results" class="results" aria-label="Battle results" aria-live="polite" hidden>
 				<article class="result-card" id="player-one-card" aria-label="Player 1 contribution results">
@@ -56,6 +61,17 @@ import type { ContributionData } from '../types/contributions';
 				<article class="result-card" id="player-two-card" aria-label="Player 2 contribution results">
 					<div class="result-content" id="player-two-result"></div>
 				</article>
+			</section>
+
+			<div id="share-controls" class="share-controls" hidden>
+				<button id="share-button" type="button">📋 Share Results</button>
+				<p id="share-feedback" role="status" aria-live="polite"></p>
+			</div>
+
+			<section class="history" aria-labelledby="history-title">
+				<h2 id="history-title">Recent Battles</h2>
+				<ul id="battle-history" aria-live="polite"></ul>
+				<button id="clear-history" class="utility-button" type="button">Clear History</button>
 			</section>
 		</main>
 
@@ -67,11 +83,31 @@ import type { ContributionData } from '../types/contributions';
 			const playerTwoInput = document.querySelector<HTMLInputElement>('#player-two')!;
 			const battleButton = document.querySelector<HTMLButtonElement>('#battle-button')!;
 			const themeToggle = document.querySelector<HTMLButtonElement>('#theme-toggle')!;
+			const soundToggle = document.querySelector<HTMLButtonElement>('#sound-toggle')!;
 			const results = document.querySelector<HTMLElement>('#results')!;
 			const loading = document.querySelector<HTMLElement>('#loading')!;
 			const status = document.querySelector<HTMLElement>('#battle-status')!;
+			const countdownOverlay = document.querySelector<HTMLElement>('#countdown-overlay')!;
+			const winnerBanner = document.querySelector<HTMLElement>('#winner-banner')!;
+			const shareControls = document.querySelector<HTMLElement>('#share-controls')!;
+			const shareButton = document.querySelector<HTMLButtonElement>('#share-button')!;
+			const shareFeedback = document.querySelector<HTMLElement>('#share-feedback')!;
+			const historyList = document.querySelector<HTMLUListElement>('#battle-history')!;
+			const clearHistoryButton = document.querySelector<HTMLButtonElement>('#clear-history')!;
 			const usernamePattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 			const root = document.documentElement;
+			type BattleRecord = {
+				playerOne: string;
+				playerTwo: string;
+				playerOneContributions: number;
+				playerTwoContributions: number;
+				winner: string;
+				playedAt: string;
+			};
+			let muted = true;
+			let audioContext: AudioContext | undefined;
+			let lastBattle: BattleRecord | undefined;
+
 			const savedTheme = localStorage.getItem('mona-mayhem-theme');
 			if (savedTheme === 'alternate') {
 				root.dataset.theme = 'alternate';
@@ -89,6 +125,87 @@ import type { ContributionData } from '../types/contributions';
 					localStorage.removeItem('mona-mayhem-theme');
 				}
 				themeToggle.setAttribute('aria-pressed', String(isAlternate));
+			});
+
+			function playSound(kind: 'coin' | 'powerup' | 'error'): void {
+				if (muted) return;
+				audioContext ??= new AudioContext();
+				const notes =
+					kind === 'coin'
+						? [880, 1175]
+						: kind === 'powerup'
+							? [523, 659, 784, 1047]
+							: [180, 110, 70];
+				const wave: OscillatorType = kind === 'error' ? 'sawtooth' : 'square';
+				notes.forEach((frequency, index) => {
+					const oscillator = audioContext!.createOscillator();
+					const gain = audioContext!.createGain();
+					const startAt = audioContext!.currentTime + index * 0.09;
+					oscillator.type = wave;
+					oscillator.frequency.setValueAtTime(frequency, startAt);
+					gain.gain.setValueAtTime(0.0001, startAt);
+					gain.gain.exponentialRampToValueAtTime(0.12, startAt + 0.015);
+					gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.12);
+					oscillator.connect(gain);
+					gain.connect(audioContext!.destination);
+					oscillator.start(startAt);
+					oscillator.stop(startAt + 0.13);
+				});
+			}
+
+			soundToggle.addEventListener('click', () => {
+				muted = !muted;
+				soundToggle.setAttribute('aria-pressed', String(muted));
+				soundToggle.textContent = muted ? '🔇 Sound: Muted' : '🔊 Sound: On';
+			});
+
+			function readHistory(): BattleRecord[] {
+				try {
+					const stored: unknown = JSON.parse(localStorage.getItem('mona-mayhem-history') ?? '[]');
+					return Array.isArray(stored) ? (stored as BattleRecord[]) : [];
+				} catch {
+					return [];
+				}
+			}
+
+			function renderHistory(): void {
+				historyList.replaceChildren();
+				for (const record of readHistory()) {
+					const item = document.createElement('li');
+					const time = document.createElement('time');
+					time.dateTime = record.playedAt;
+					time.textContent = new Date(record.playedAt).toLocaleString();
+					item.textContent = `${record.playerOne} (${record.playerOneContributions.toLocaleString()}) vs ${record.playerTwo} (${record.playerTwoContributions.toLocaleString()}) — ${record.winner} `;
+					item.append(time);
+					historyList.append(item);
+				}
+			}
+
+			function saveBattle(record: BattleRecord): void {
+				const history = [record, ...readHistory()].slice(0, 10);
+				localStorage.setItem('mona-mayhem-history', JSON.stringify(history));
+				renderHistory();
+			}
+
+			clearHistoryButton.addEventListener('click', () => {
+				localStorage.removeItem('mona-mayhem-history');
+				renderHistory();
+			});
+			renderHistory();
+
+			shareButton.addEventListener('click', async () => {
+				if (!lastBattle) return;
+				const summary =
+					lastBattle.winner === 'Tie'
+						? `🤝 ${lastBattle.playerOne} vs ${lastBattle.playerTwo}: IT'S A TIE! 🤝`
+						: `🏆 ${lastBattle.winner} wins! ${lastBattle.playerOne} (${lastBattle.playerOneContributions.toLocaleString()}) vs ${lastBattle.playerTwo} (${lastBattle.playerTwoContributions.toLocaleString()}) 🏆`;
+				try {
+					await navigator.clipboard.writeText(summary);
+					shareFeedback.textContent = 'Copied to clipboard!';
+				} catch {
+					shareFeedback.textContent = 'Could not copy results to clipboard.';
+				}
+				window.setTimeout(() => (shareFeedback.textContent = ''), 2500);
 			});
 
 			type PlayerResult = { username: string; data?: ContributionData; error?: string };
@@ -120,7 +237,20 @@ import type { ContributionData } from '../types/contributions';
 				}
 			}
 
-			function renderPlayer(target: HTMLElement, result: PlayerResult): void {
+			function longestStreak(data: ContributionData): number {
+				let current = 0;
+				let longest = 0;
+				for (const week of data.weeks) {
+					for (let weekday = 0; weekday < 7; weekday++) {
+						const day = week.contribution_days.find((entry) => entry.weekday === weekday);
+						current = day && day.count > 0 ? current + 1 : 0;
+						longest = Math.max(longest, current);
+					}
+				}
+				return longest;
+			}
+
+			function renderPlayer(target: HTMLElement, result: PlayerResult, hasLongestStreak: boolean): void {
 				target.replaceChildren();
 				if (!result.data) {
 					const error = document.createElement('p');
@@ -139,6 +269,9 @@ import type { ContributionData } from '../types/contributions';
 				const range = document.createElement('p');
 				range.className = 'date-range';
 				range.textContent = `${data.from} — ${data.to}`;
+				const streak = document.createElement('p');
+				streak.className = `streak${hasLongestStreak ? ' longest-streak' : ''}`;
+				streak.textContent = `🔥 Longest Streak: ${longestStreak(data)} days`;
 				const graphViewport = document.createElement('div');
 				graphViewport.className = 'graph-viewport';
 				graphViewport.setAttribute('role', 'group');
@@ -169,7 +302,31 @@ import type { ContributionData } from '../types/contributions';
 				}
 
 				graphViewport.append(graph);
-				target.append(username, total, range, graphViewport);
+				const legend = document.createElement('div');
+				legend.className = 'legend';
+				const less = document.createElement('span');
+				less.textContent = 'Less';
+				const more = document.createElement('span');
+				more.textContent = 'More';
+				const swatches = document.createElement('span');
+				swatches.className = 'legend-swatches';
+				for (const color of data.colors_full) {
+					const swatch = document.createElement('span');
+					swatch.className = 'legend-swatch';
+					swatch.style.backgroundColor = color;
+					swatches.append(swatch);
+				}
+				legend.append(less, swatches, more);
+				target.append(username, total, range, graphViewport, streak, legend);
+			}
+
+			async function runCountdown(): Promise<void> {
+				countdownOverlay.hidden = false;
+				for (const text of ['3...', '2...', '1...', '⚡ FIGHT! ⚡']) {
+					countdownOverlay.textContent = text;
+					await new Promise((resolve) => window.setTimeout(resolve, 1000));
+				}
+				countdownOverlay.hidden = true;
 			}
 
 			form.addEventListener('submit', async (event) => {
@@ -192,20 +349,57 @@ import type { ContributionData } from '../types/contributions';
 				if (!valid) {
 					status.textContent = '';
 					inputs.find((input) => input.getAttribute('aria-invalid') === 'true')?.focus();
+					playSound('error');
 					return;
 				}
 
 				battleButton.disabled = true;
 				loading.hidden = false;
 				status.textContent = '';
+				winnerBanner.hidden = true;
+				shareControls.hidden = true;
 				results.hidden = true;
+				playSound('coin');
 
-				const [one, two] = await Promise.all(usernames.map((username) => fetchPlayer(username)));
-				renderPlayer(document.querySelector<HTMLElement>('#player-one-result')!, one);
-				renderPlayer(document.querySelector<HTMLElement>('#player-two-result')!, two);
+				const resultsPromise = Promise.all(usernames.map((username) => fetchPlayer(username)));
+				await runCountdown();
+				const [one, two] = await resultsPromise;
+				const oneStreak = one.data ? longestStreak(one.data) : 0;
+				const twoStreak = two.data ? longestStreak(two.data) : 0;
+				renderPlayer(document.querySelector<HTMLElement>('#player-one-result')!, one, oneStreak > twoStreak);
+				renderPlayer(document.querySelector<HTMLElement>('#player-two-result')!, two, twoStreak > oneStreak);
 				results.hidden = false;
 				loading.hidden = true;
 				battleButton.disabled = false;
+
+				if (!one.data || !two.data) {
+					status.textContent = 'One or both fighters could not load. Check the player cards and try again.';
+					playSound('error');
+					return;
+				}
+
+				const winner =
+					one.data.total_contributions === two.data.total_contributions
+						? 'Tie'
+						: one.data.total_contributions > two.data.total_contributions
+							? one.username
+							: two.username;
+				winnerBanner.textContent =
+					winner === 'Tie' ? "🤝 IT'S A TIE! 🤝" : `🏆 ${winner} WINS! 🏆`;
+				winnerBanner.hidden = false;
+				shareControls.hidden = false;
+				status.textContent = '';
+				const record: BattleRecord = {
+					playerOne: one.username,
+					playerTwo: two.username,
+					playerOneContributions: one.data.total_contributions,
+					playerTwoContributions: two.data.total_contributions,
+					winner,
+					playedAt: new Date().toISOString(),
+				};
+				lastBattle = record;
+				saveBattle(record);
+				playSound('powerup');
 			});
 		</script>
 
@@ -231,6 +425,10 @@ import type { ContributionData } from '../types/contributions';
 
 			* {
 				box-sizing: border-box;
+			}
+
+			[hidden] {
+				display: none !important;
 			}
 
 			body {
@@ -446,6 +644,99 @@ import type { ContributionData } from '../types/contributions';
 				animation: loading-pulse 900ms ease-in-out infinite;
 			}
 
+			.countdown-overlay {
+				position: fixed;
+				z-index: 20;
+				inset: 0;
+				display: grid;
+				place-items: center;
+				color: var(--color-green);
+				background: rgb(10 10 26 / 92%);
+				font-size: clamp(2rem, 10vw, 5rem);
+				text-shadow: 0 0 24px var(--color-green);
+				animation: countdown-flash 1s ease-in-out infinite alternate;
+			}
+
+			.winner-banner {
+				margin: 36px auto;
+				color: var(--color-green);
+				font-size: clamp(1.2rem, 4vw, 2rem);
+				text-shadow: 0 0 16px var(--color-green);
+				animation: winner-reveal 700ms cubic-bezier(0.2, 1.6, 0.4, 1) both;
+			}
+
+			.streak {
+				color: var(--color-text);
+				font-size: 0.8rem;
+			}
+
+			.longest-streak {
+				color: var(--color-green);
+				text-shadow: 0 0 10px var(--color-green);
+			}
+
+			.legend {
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				gap: 8px;
+				margin-top: 14px;
+				font: 9px Arial, sans-serif;
+			}
+
+			.legend-swatches {
+				display: inline-flex;
+				gap: 3px;
+			}
+
+			.legend-swatch {
+				width: 12px;
+				height: 12px;
+				border-radius: 2px;
+			}
+
+			.share-controls {
+				margin: 0 auto 40px;
+			}
+
+			.share-controls button {
+				width: auto;
+			}
+
+			#share-feedback {
+				min-height: 1.8em;
+				color: var(--color-green);
+			}
+
+			.history {
+				margin-top: 56px;
+				text-align: left;
+			}
+
+			.history h2 {
+				color: var(--color-purple);
+				font-size: 1rem;
+				text-align: center;
+			}
+
+			#battle-history {
+				display: grid;
+				gap: 10px;
+				padding-left: 24px;
+				font: 12px/1.8 Arial, sans-serif;
+			}
+
+			#battle-history time {
+				display: block;
+				color: var(--color-purple);
+				font-size: 0.85em;
+			}
+
+			#clear-history {
+				display: block;
+				margin: 18px auto;
+			}
+
 			.graph-viewport {
 				overflow-x: auto;
 				padding-bottom: 8px;
@@ -566,6 +857,25 @@ import type { ContributionData } from '../types/contributions';
 				}
 				75% {
 					transform: translateX(5px);
+				}
+			}
+
+			@keyframes countdown-flash {
+				to {
+					color: var(--color-purple);
+					text-shadow: 0 0 36px var(--color-purple);
+					transform: scale(1.08);
+				}
+			}
+
+			@keyframes winner-reveal {
+				from {
+					opacity: 0;
+					transform: scale(0.55) translateY(20px);
+				}
+				to {
+					opacity: 1;
+					transform: scale(1) translateY(0);
 				}
 			}
 
